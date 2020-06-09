@@ -1,6 +1,7 @@
 //! The connection stuff you probably want to use. Conn is the lowlevel abstraction RpcConn is the higher level wrapper with convenience functions
 //! over the Conn struct.
 
+
 use crate::auth;
 use crate::message;
 use crate::message_builder::MarshalledMessage;
@@ -13,6 +14,8 @@ use std::os::unix::io::{AsRawFd, FromRawFd};
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 use std::time;
+
+use log::{info,trace, debug, warn};
 
 use nix::cmsg_space;
 use nix::sys::socket::{
@@ -97,19 +100,23 @@ impl RpcConn {
 
     pub fn session_conn(timeout: Timeout) -> Result<Self> {
         let session_path = get_session_bus_path()?;
+	debug!(target: "rustbus", "Trying connection to {:?}", session_path);
         let con = Conn::connect_to_bus(session_path, true)?;
         let mut con = Self::new(con);
         let serial = con.send_message(&mut crate::standard_messages::hello(), Timeout::Infinite)?;
         con.wait_response(serial, timeout)?;
+	info!(target: "rustbus", "Connected to system session");
         Ok(con)
     }
 
     pub fn system_conn(timeout: Timeout) -> Result<Self> {
         let session_path = get_system_bus_path()?;
+	debug!(target: "rustbus", "Trying connection to {:?}", session_path);
         let con = Conn::connect_to_bus(session_path, true)?;
         let mut con = Self::new(con);
         let serial = con.send_message(&mut crate::standard_messages::hello(), Timeout::Infinite)?;
         con.wait_response(serial, timeout)?;
+	info!(target: "rustbus", "Connected to system session");
         Ok(con)
     }
 
@@ -119,11 +126,13 @@ impl RpcConn {
 
     /// Return a response if one is there but dont block
     pub fn try_get_response(&mut self, serial: u32) -> Option<MarshalledMessage> {
+	trace!(target: "rustbus", "Checking response for {}");
         self.responses.remove(&serial)
     }
 
     /// Return a response if one is there or block until it arrives
     pub fn wait_response(&mut self, serial: u32, timeout: Timeout) -> Result<MarshalledMessage> {
+	debug!(target: "rustbus", "Waiting response for {}, timeout={:?}", serial, timeout);
         loop {
             if let Some(msg) = self.try_get_response(serial) {
                 return Ok(msg);
@@ -139,6 +148,7 @@ impl RpcConn {
 
     /// Return a sginal if one is there or block until it arrives
     pub fn wait_signal(&mut self, timeout: Timeout) -> Result<MarshalledMessage> {
+	debug!(target: "rustbus", "Waiting signal, timeout={:?}", timeout);
         loop {
             if let Some(msg) = self.try_get_signal() {
                 return Ok(msg);
@@ -149,11 +159,13 @@ impl RpcConn {
 
     /// Return a call if one is there but dont block
     pub fn try_get_call(&mut self) -> Option<MarshalledMessage> {
+	trace!(target: "rustbus", "Checking call");
         self.calls.pop_front()
     }
 
     /// Return a call if one is there or block until it arrives
     pub fn wait_call(&mut self, timeout: Timeout) -> Result<MarshalledMessage> {
+	debug!(target: "rustbus", "Waiting call, timeout={:?}", timeout);
         loop {
             if let Some(msg) = self.try_get_call() {
                 return Ok(msg);
@@ -168,6 +180,7 @@ impl RpcConn {
         msg: &mut crate::message_builder::MarshalledMessage,
         timeout: Timeout,
     ) -> Result<u32> {
+	debug!(target: "rustbus", "Sending message {:?}, timeout={:?}", &msg, timeout);
         self.conn.send_message(msg, timeout)
     }
 
@@ -556,7 +569,7 @@ impl<'msga, 'msge> Conn {
                 }
                 _ => {
                     // TODO what to do?
-                    println!("Cmsg other than ScmRights: {:?}", cmsg);
+                    warn!("Cmsg other than ScmRights: {:?}", cmsg);
                 }
             }
         }
